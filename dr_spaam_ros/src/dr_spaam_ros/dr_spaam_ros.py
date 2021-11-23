@@ -1,3 +1,6 @@
+import sys
+sys.path.reverse()
+
 # import time
 import numpy as np
 import rospy
@@ -5,6 +8,7 @@ import rospy
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Point, Pose, PoseArray
 from visualization_msgs.msg import Marker
+from spencer_tracking_msgs.msg import DetectedPerson, DetectedPersons
 
 from dr_spaam.detector import Detector
 
@@ -17,11 +21,13 @@ class DrSpaamROS:
         self._detector = Detector(
             self.weight_file,
             model=self.detector_model,
-            gpu=True,
+            gpu=False,
             stride=self.stride,
             panoramic_scan=self.panoramic_scan,
         )
         self._init()
+        self.detection_id = 0
+
 
     def _read_params(self):
         """
@@ -48,6 +54,11 @@ class DrSpaamROS:
             topic, Marker, queue_size=queue_size, latch=latch
         )
 
+        topic, queue_size, latch = read_publisher_param("spencer")
+        self._spencer_pub = rospy.Publisher(
+            topic, DetectedPersons, queue_size=queue_size, latch=latch
+        )
+
         # Subscriber
         topic, queue_size = read_subscriber_param("scan")
         self._scan_sub = rospy.Subscriber(
@@ -58,6 +69,7 @@ class DrSpaamROS:
         if (
             self._dets_pub.get_num_connections() == 0
             and self._rviz_pub.get_num_connections() == 0
+            and self._spencer_pub.get_num_connections() == 0
         ):
             return
 
@@ -80,7 +92,6 @@ class DrSpaamROS:
         conf_mask = (dets_cls >= self.conf_thresh).reshape(-1)
         dets_xy = dets_xy[conf_mask]
         dets_cls = dets_cls[conf_mask]
-
         # convert to ros msg and publish
         dets_msg = detections_to_pose_array(dets_xy, dets_cls)
         dets_msg.header = msg.header
@@ -89,6 +100,12 @@ class DrSpaamROS:
         rviz_msg = detections_to_rviz_marker(dets_xy, dets_cls)
         rviz_msg.header = msg.header
         self._rviz_pub.publish(rviz_msg)
+
+        spencer_msg = detections_to_spencer_detections(dets_xy, dets_cls,self.detection_id)
+        spencer_msg.header = msg.header
+        spencer_msg.header.stamp = rospy.Time.now()
+        self.detection_id += len(spencer_msg.detections)
+        self._spencer_pub.publish(spencer_msg)
 
 
 def detections_to_rviz_marker(dets_xy, dets_cls):
@@ -150,6 +167,23 @@ def detections_to_pose_array(dets_xy, dets_cls):
         pose_array.poses.append(p)
 
     return pose_array
+
+def detections_to_spencer_detections(dets_xy, dets_cls,detection_id):
+    ped_locations = DetectedPersons()
+    id_num = detection_id
+    for d_xy, d_cls in zip(dets_xy, dets_cls):
+        ped_location = DetectedPerson()
+        id_num+=1
+        ped_location.detection_id = id_num
+        ped_location.confidence = d_cls
+        ped_location.pose.pose.position.x = d_xy[0]
+        ped_location.pose.pose.position.y = d_xy[1]
+        ped_location.pose.pose.position.z = 0.0
+        ped_location.pose.covariance = [0.11349243571626173, -0.013492485277898883, 3673.2050992363506, 0.0, 0.0, 0.0, -0.013492485277898881, 0.11349253483971816, -3673.218591986086, 0.0, 0.0, 0.0, 3673.2050992363506, -3673.218591986086, 999999998.9730148, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999999.0, 999999.0, 999999.0, 0.0, 0.0, 0.0, 999999.0, 999999.0, 999999.0, 0.0, 0.0, 0.0, 999999.0, 999999.0, 999999.0]
+        ped_location.modality = 'laser2d'
+        ped_locations.detections.append(ped_location)
+
+    return ped_locations
 
 
 def read_subscriber_param(name):

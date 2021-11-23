@@ -9,7 +9,12 @@ publisher:
         queue_size: 1
         latch: false
 
+    spencer:
+        topic: /spencer/perception_internal/detected_persons/laser_front
+        queue_size: 1
+        latch: false
+
 subscriber:
     scan:
-        topic: /segway/scan_multi
+        topic: /scan
         queue_size: 1
